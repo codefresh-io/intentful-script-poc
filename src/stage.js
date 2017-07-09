@@ -4,10 +4,12 @@ const
     kefir = require('kefir'),
     EventEmitter = require('events').EventEmitter,
     util = require('util'),
-    tapTestFrameworkExport = require('./export/tap_test_framework.js'),
-    exitCodeExport = require('./export/exit_code.js'),
-    standardOutputLogExport = require('./export/standard_output_log.js');
-
+    Stream = require('stream'),
+    DockerClientFactory = require('../lib/docker'),
+    tapTestFrameworkCollect = require('./collect/tap_test_framework'),
+    exitCodeCollect = require('./collect/exit_code'),
+    standardOutputLogCollect = require('./collect/standard_output_log');
+    filesystemCollect = require('./collect/filesystem');
 
 const CONTAINER_TIMEOUT = 160; // Seconds
 
@@ -22,14 +24,17 @@ const Importers = {
 };
 
 const Collectors = {
-    "exit_code": exitCodeExport,
-    "tap_test_framework": tapTestFrameworkExport,
-    "standard_output_log": standardOutputLogExport
+    "exit_code": exitCodeCollect,
+    "tap_test_framework": tapTestFrameworkCollect,
+    "standard_output_log": standardOutputLogCollect,
+    "filesystem": filesystemCollect
 };
 
 module.exports = class extends EventEmitter {
-    constructor({ dockerClient, registryResolver }, { type, ["import"]: _import, command }){
+    constructor({ dockerClientConfiguration, registryResolver, project: { type, ["import"]: _import, command }}){
         super();
+
+        let dockerClient = DockerClientFactory(dockerClientConfiguration);
 
         let containerIdProperty = kefir
             .fromPromise(dockerClient.createContainer({ cmd: ["sleep", CONTAINER_TIMEOUT.toString()], name: ["cf", uuid()].join('_'), image: getImageForStageName(type) }))
@@ -46,8 +51,7 @@ module.exports = class extends EventEmitter {
             .flatMap((containerId)=> {
                 return kefir
                     .fromPromise(dockerClient.attachContainer({ containerId }))
-                    .flatMap(({ stdout })=> kefir.fromEvents(stdout, 'end').take(1))
-                    .map(_.constant(containerId));
+                    .flatMap(({ stdout })=> kefir.fromEvents(stdout, 'end').take(1));
             });
 
         let artifactStream = kefir
@@ -65,33 +69,52 @@ module.exports = class extends EventEmitter {
 
                                         let commandApi = {
                                             getOutput: ()=> Promise.resolve({ stdout, stderr }),
-                                            getExitCode: (function(promise){ return ()=> promise; })(kefir.fromEvents(stdout, 'end').take(1).flatMap(()=> kefir.fromPromise(dockerClient.inspectExec({ execId })).map(_.property('exit_code'))).toPromise())
+                                            getExitCode: (function(promise){ return ()=> promise; })(kefir.fromEvents(stdout, 'end').take(1).flatMap(()=> kefir.fromPromise(dockerClient.inspectExec({ execId })).map(_.property('exit_code'))).toPromise()),
+                                            getFileSystem: (path = "/")=> dockerClient.getFileSystemPath({ containerId, path })
                                         };
 
                                         return kefir
                                             .combine(
                                                 collect.map((collectorType, collectorIndex) => {
-                                                    return kefir.fromPromise(Collectors[collectorType](commandApi)).map((value) => {
+                                                    let collector = Collectors[(_.isObject(collectorType) ? collectorType.type : collectorType)] || function(){ return Promise.reject('Unsupported Collector'); };
+                                                    return kefir
+                                                        .fromPromise(collector(commandApi, (_.isObject(collectorType) && collectorType) || {}))
+                                                        .flatMap((data)=> {
+                                                            this.emit('artifact', {
+                                                                command_index: commandIndex,
+                                                                collector_index: collectorIndex,
+                                                                data_type: collector["data_type"],
+                                                                data
+                                                            });
+                                                            return ((data instanceof Stream) ? kefir.fromEvents(data, 'end').take(1) : kefir.constant()).map(_.constant(true));
+                                                        })
+                                                        .flatMapErrors((err) => {
+                                                            this.emit('error', err);
+                                                            return kefir.constant(false);
+                                                        });
+
+
+                                                    /*return kefir.fromPromise(collector(commandApi)).map((data) => {
                                                         this.emit('artifact', {
                                                             command_index: commandIndex,
                                                             collector_index: collectorIndex,
-                                                            type: collectorType,
-                                                            value
+                                                            data_type: collector["data_type"],
+                                                            data
                                                         });
                                                         return true;
-                                                    }).flatMapErrors((err) => {
-                                                        this.emit('error', err);
-                                                        return kefir.constant(false);
-                                                    })
+                                                    })*/
                                                 })
                                             );
                                     });
                             })
-                            //.map((artifact)=> ({ command_index: index, artifact }));
-                    }));
-        })
-        .onValue((obj)=> console.log(util.inspect(obj, { depth: 5 })));
+                    }))
+                    .ignoreValues()
+                    .ignoreErrors();
+        });
 
-        containerEndStream.onValue((containerId)=> dockerClient.removeContainer({ containerId }));
+        // Remove stage main container
+        kefir
+            .combine([containerIdProperty, kefir.merge([artifactStream, containerEndStream]).take(1)], _.first)
+            .onValue((containerId)=> dockerClient.removeContainer({ containerId }).then(_.noop, _.noop));
     }
 };

@@ -3,7 +3,7 @@ let
     split = require('split'),
     kefir = require('kefir');
 
-module.exports = function(commandApi){
+module.exports = _.assign(function(commandApi){
     return kefir
         .fromPromise(commandApi.getOutput())
         .flatMap(({ stderr, stdout })=> {
@@ -14,4 +14,4 @@ module.exports = function(commandApi){
                 .last();
         })
         .toPromise();
-};
+}, { data_type: "log" });

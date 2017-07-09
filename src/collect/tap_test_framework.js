@@ -7,7 +7,7 @@ const
     TOTAL_COUNT_REGEXP = /^1\.\.([0-9]+)/,
     LINE_REGEXP = /^((not )?ok)\s?([0-9]*)\s?(.*)/;
 
-module.exports = function(commandApi){
+module.exports = _.assign(function(commandApi){
     let lineStream = kefir
         .fromPromise(commandApi.getOutput())
         .flatMap(({ stdout })=> {
@@ -40,4 +40,4 @@ module.exports = function(commandApi){
             report: testResult
         }))
         .toPromise()
-};
+}, { data_type: "test_report" });
