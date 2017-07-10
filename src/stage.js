@@ -8,18 +8,21 @@ const
     DockerClientFactory = require('../lib/docker'),
     tapTestFrameworkCollect = require('./collect/tap_test_framework'),
     exitCodeCollect = require('./collect/exit_code'),
+    standardOutputFilesystemCollect = require('./collect/standard_output_filesystem');
     standardOutputLogCollect = require('./collect/standard_output_log');
     filesystemCollect = require('./collect/filesystem');
 
 const CONTAINER_TIMEOUT = 160; // Seconds
 
 const getImageForStageName = _.partial(_.get, {
-    "mocha": "codefresh/test_harness"
+    "mocha": "codefresh/test_harness",
+    "git": "bwits/docker-git-alpine",
+    "node_6": "node:6-alpine"
 }, _, 'alpine:3.1');
 
 const Importers = {
-    "environment": function(registryResolver, dockerClient, { from, variable_name }){
-        return registryResolver(from).then((value)=>({ [variable_name]: value }));
+    "environment": function(registry, dockerClient, { from, variable_name }){
+        return registry.getValue(from).then((value)=>({ [variable_name]: value }));
     }
 };
 
@@ -27,23 +30,32 @@ const Collectors = {
     "exit_code": exitCodeCollect,
     "tap_test_framework": tapTestFrameworkCollect,
     "standard_output_log": standardOutputLogCollect,
-    "filesystem": filesystemCollect
+    "filesystem": filesystemCollect,
+    "standard_output_filesystem": standardOutputFilesystemCollect
 };
 
+const
+    DOCKER_CLIENT = Symbol('DockerClient'),
+    REGISTRY = Symbol('Registry');
+
 module.exports = class extends EventEmitter {
-    constructor({ dockerClientConfiguration, registryResolver, project: { type, ["import"]: _import, command }}){
+    constructor({ dockerClientConfiguration, registry }){
         super();
-
-        let dockerClient = DockerClientFactory(dockerClientConfiguration);
-
-        let containerIdProperty = kefir
+        Object.assign(this, {
+            [REGISTRY]: registry,
+            [DOCKER_CLIENT]: DockerClientFactory(dockerClientConfiguration)
+        });
+    }
+    run({ type, ["import"]: _import, command }){
+        let [dockerClient, registry] = [DOCKER_CLIENT, REGISTRY].map((symbol)=> this[symbol]),
+            containerIdProperty = kefir
             .fromPromise(dockerClient.createContainer({ cmd: ["sleep", CONTAINER_TIMEOUT.toString()], name: ["cf", uuid()].join('_'), image: getImageForStageName(type) }))
             .flatMap(({ containerId })=> kefir.fromPromise(dockerClient.startContainer({ containerId })).map(_.constant(containerId)))
             .toProperty();
 
         let environmentVariableProperty = containerIdProperty.flatMap(()=> {
             return kefir.combine(_import.map((importConfig)=>
-                kefir.fromPromise(Importers[importConfig["to"]](registryResolver, dockerClient, importConfig))
+                kefir.fromPromise(Importers[importConfig["to"]](registry, dockerClient, importConfig))
             ), _.assign);
         }).toProperty();
 
@@ -67,10 +79,15 @@ module.exports = class extends EventEmitter {
                                     .flatMap(({ execId })=> kefir.fromPromise(dockerClient.startExec({ execId })).map(_.partial(_.assign, { execId })))
                                     .flatMap(({ stdout, stderr, execId })=> {
 
+                                        stdout.on('data', this.emit.bind(this, 'stdout'));
+                                        stderr.on('data', this.emit.bind(this, 'stderr'));
+                                        //stdout.pipe(process.stdout);
+                                        //stderr.pipe(process.stderr);
+
                                         let commandApi = {
                                             getOutput: ()=> Promise.resolve({ stdout, stderr }),
                                             getExitCode: (function(promise){ return ()=> promise; })(kefir.fromEvents(stdout, 'end').take(1).flatMap(()=> kefir.fromPromise(dockerClient.inspectExec({ execId })).map(_.property('exit_code'))).toPromise()),
-                                            getFileSystem: (path = "/")=> dockerClient.getFileSystemPath({ containerId, path })
+                                            getFileSystem(path = "/"){ return this.getExitCode().then(()=> dockerClient.getFileSystemPath({ containerId, path })) }
                                         };
 
                                         return kefir
@@ -92,29 +109,17 @@ module.exports = class extends EventEmitter {
                                                             this.emit('error', err);
                                                             return kefir.constant(false);
                                                         });
-
-
-                                                    /*return kefir.fromPromise(collector(commandApi)).map((data) => {
-                                                        this.emit('artifact', {
-                                                            command_index: commandIndex,
-                                                            collector_index: collectorIndex,
-                                                            data_type: collector["data_type"],
-                                                            data
-                                                        });
-                                                        return true;
-                                                    })*/
                                                 })
                                             );
                                     });
                             })
-                    }))
-                    .ignoreValues()
-                    .ignoreErrors();
-        });
+                    }));
+            }).last();
 
         // Remove stage main container
-        kefir
+        return kefir
             .combine([containerIdProperty, kefir.merge([artifactStream, containerEndStream]).take(1)], _.first)
-            .onValue((containerId)=> dockerClient.removeContainer({ containerId }).then(_.noop, _.noop));
+            .flatMap((containerId)=> kefir.fromPromise(dockerClient.removeContainer({ containerId })))
+            .toPromise();
     }
 };

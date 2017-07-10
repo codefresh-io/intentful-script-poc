@@ -3,19 +3,27 @@ const
     fs = require('fs'),
     path = require('path'),
     kefir = require('kefir'),
+    uuid = require('uuid'),
     minimist = require('minimist'),
     sampleProject = require('./data/project.json'),
     Backbone = require('backbone'),
+    Stream = require('stream'),
     Stage = require('./src/stage'),
     { extract: tarExtractor } = require('tar-stream');
 
 let
     store = new Backbone.Model(require('./data/sample_registry.json')),
-    registryResolver = (key)=> Promise.resolve(store.get(key)),
-    stageFactory = (project)=>(function({ folder: dockerSslFolder, host: dockerHost, port: dockerPort }){
+    registry = {
+        get: _.flow(store.get.bind(store), (value)=> value && _.zipObject(["type", "value"], Array.from(value.match(/^([a-z_]+?)\|(.*)/i)).slice(1)), Promise.resolve.bind(Promise)),
+        getType(key){ return this.get(key).then(_.property('type')); },
+        getValue(key){ return this.get(key).then(_.property('value')); },
+        getStream(key){ return this.getValue(key).then((filename)=> fs.createReadStream(path.join([".", "data", "registry", filename].join('/')))); },
+        set: (key, type, value)=> Promise.resolve(store.set({ [key]: [type, value].join('|') })),
+        getWriteStream(key, type){ let id = uuid.v4(), stream = fs.createWriteStream(path.join([".", "data", "registry", [id, 'tar'].join('.')].join('/'))); stream.once('finish',()=>{ this.set(key, type, id); }); return stream; }
+    },
+    stage = (function({ folder: dockerSslFolder, host: dockerHost, port: dockerPort }){
         return new Stage({
-            project,
-            registryResolver,
+            registry,
             dockerClientConfiguration: _.assign({
                     host: dockerHost,
                     port: dockerPort,
@@ -24,18 +32,13 @@ let
         });
     })(minimist(process.argv.slice(2), { default: { "folder": ".", "host": "localhost", "port": 2376 }, alias: { "folder": "f", "host": "h", "port": "p" }}));
 
-let stage = stageFactory(_.get(sampleProject, 'stage.0'));
+// Debug: A glance into stage run
+kefir.merge(["stdout", "stdin"].map((streamName)=> kefir.fromEvents(stage, streamName))).onValue((chunk)=> process.stdout.write(chunk));
+
 let artifactStream = kefir.fromEvents(stage, 'artifact');
-artifactStream
-    .filter(_.matches({ data_type: "filesystem" }))
-    .flatMap(({ data })=> {
-        let extractor = tarExtractor();
-        data.pipe(extractor);
-        return kefir
-            .fromEvents(extractor, 'entry', ({ name }, stream, next)=> {
-                stream.resume();
-                next();
-                return name;
-            });
-    })
-    .log();
+artifactStream.onValue(({ command_index, collector_index, data, data_type })=> {
+    let keyName = ["stage", command_index, collector_index].join('_');
+    data instanceof Stream ? data.pipe(registry.getWriteStream(keyName, data_type)) : registry.set(keyName, data_type, _.isObject(data) ? JSON.stringify(data) : data);
+});
+
+stage.run(_.get(sampleProject, 'stage.0')).then(()=> console.log(store.toJSON()));
