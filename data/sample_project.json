@@ -1,0 +1,62 @@
+{
+  "stage": [
+    {
+      "name": "Clone Registry",
+      "type": "git",
+      "import": [
+        {
+          "to": "environment",
+          "from": "git_repository_url",
+          "variable_name": "GIT_REPO_URL"
+        },
+        {
+          "to": "environment",
+          "from": "git_repository_branch",
+          "variable_name": "GIT_REPO_BRANCH"
+        }
+      ],
+      "command": [
+        {
+          "run": ["/bin/sh", "-c", "git clone --depth=1 $GIT_REPO_URL /root/express"],
+          "collect": ["standard_output_log", { "type": "filesystem", "path": "/root/express", "alias": "repo_direct" }, "exit_code"]
+        },
+        {
+          "run": ["/bin/sh", "-c", "cd /root/express && git archive --format=tar $GIT_REPO_BRANCH"],
+          "collect": [{ "type": "standard_output_filesystem", "alias": "repo"}, "exit_code"]
+        }
+      ]
+    },
+    {
+      "name": "Install NPM modules",
+      "type": "node_6",
+      "import": [],
+      "command": []
+    },
+    {
+      "name": "Test project",
+      "type": "mocha",
+      "import": [
+
+        {
+          "to": "environment",
+          "from": "git_repository_url",
+          "variable_name": "ANOTHER_TEST"
+        }
+      ],
+      "command": [
+        {
+          "run": ["npm", "?"],
+          "collect": ["tap_test_framework", "exit_code"]
+        },
+        {
+          "run": ["echo", "1..10\nok 1 Hello World"],
+          "collect": ["tap_test_framework", { "type": "filesystem", "path": "/etc" }]
+        },
+        {
+          "run": ["bash", "-c", "cd express && npm run test-tap"],
+          "collect": ["tap_test_framework"]
+        }
+      ]
+    }
+  ]
+}

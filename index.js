@@ -5,7 +5,7 @@ const
     kefir = require('kefir'),
     uuid = require('uuid'),
     minimist = require('minimist'),
-    sampleProject = require('./data/project.json'),
+    sampleProject = require('./data/sample_project.json'),
     Backbone = require('backbone'),
     Stream = require('stream'),
     Stage = require('./src/stage'),
