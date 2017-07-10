@@ -23,6 +23,14 @@ const getImageForStageName = _.partial(_.get, {
 const Importers = {
     "environment": function(registry, dockerClient, { from, variable_name }){
         return registry.getValue(from).then((value)=>({ [variable_name]: value }));
+    },
+    "filesystem": function(registry, dockerClient, { from, folder, _containerId }){
+        let getKeyName = (key)=> registry.get(key).then(({ type, value })=> type === "pointer" ? getKeyName(value) : key);
+        return getKeyName(from).then((key)=> {
+            return registry.getStream(key).then((stream)=> {
+                return dockerClient.setFileSystemPath({ containerId: _containerId, path: folder, stream }).then(()=>{});
+            }).catch((x)=>console.warn(x.toString('utf8')));
+        });
     }
 };
 
@@ -47,15 +55,16 @@ module.exports = class extends EventEmitter {
         });
     }
     run({ type, ["import"]: _import, command }){
+
         let [dockerClient, registry] = [DOCKER_CLIENT, REGISTRY].map((symbol)=> this[symbol]),
             containerIdProperty = kefir
-            .fromPromise(dockerClient.createContainer({ cmd: ["sleep", CONTAINER_TIMEOUT.toString()], name: ["cf", uuid()].join('_'), image: getImageForStageName(type) }))
-            .flatMap(({ containerId })=> kefir.fromPromise(dockerClient.startContainer({ containerId })).map(_.constant(containerId)))
-            .toProperty();
+                .fromPromise(dockerClient.createContainer({ cmd: ["sleep", CONTAINER_TIMEOUT.toString()], name: ["cf", uuid()].join('_'), image: getImageForStageName(type) }))
+                .flatMap(({ containerId })=> kefir.fromPromise(dockerClient.startContainer({ containerId })).map(_.constant(containerId)))
+                .toProperty();
 
-        let environmentVariableProperty = containerIdProperty.flatMap(()=> {
+        let environmentVariableProperty = containerIdProperty.flatMap((containerId)=> {
             return kefir.combine(_import.map((importConfig)=>
-                kefir.fromPromise(Importers[importConfig["to"]](registry, dockerClient, importConfig))
+                kefir.fromPromise(Importers[importConfig["to"]](registry, dockerClient, _.assign(importConfig, { _containerId: containerId })))
             ), _.assign);
         }).toProperty();
 
@@ -92,16 +101,20 @@ module.exports = class extends EventEmitter {
 
                                         return kefir
                                             .combine(
-                                                collect.map((collectorType, collectorIndex) => {
-                                                    let collector = Collectors[(_.isObject(collectorType) ? collectorType.type : collectorType)] || function(){ return Promise.reject('Unsupported Collector'); };
+                                                collect.map((collectorObject, collectorIndex) => {
+                                                    let
+                                                        { alias, type = collectorObject } = collectorObject,
+                                                        collector = Collectors[type] || (()=> Promise.reject('Unsupported Collector'));
+
                                                     return kefir
-                                                        .fromPromise(collector(commandApi, (_.isObject(collectorType) && collectorType) || {}))
+                                                        .fromPromise(collector(commandApi, _.isObject(collectorObject) ? collectorObject : {}))
                                                         .flatMap((data)=> {
                                                             this.emit('artifact', {
                                                                 command_index: commandIndex,
                                                                 collector_index: collectorIndex,
                                                                 data_type: collector["data_type"],
-                                                                data
+                                                                data,
+                                                                alias
                                                             });
                                                             return ((data instanceof Stream) ? kefir.fromEvents(data, 'end').take(1) : kefir.constant()).map(_.constant(true));
                                                         })
@@ -119,7 +132,7 @@ module.exports = class extends EventEmitter {
         // Remove stage main container
         return kefir
             .combine([containerIdProperty, kefir.merge([artifactStream, containerEndStream]).take(1)], _.first)
-            .flatMap((containerId)=> kefir.fromPromise(dockerClient.removeContainer({ containerId })))
+            //.flatMap((containerId)=> kefir.fromPromise(dockerClient.removeContainer({ containerId })))
             .toPromise();
     }
 };

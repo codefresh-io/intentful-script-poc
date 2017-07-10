@@ -18,25 +18,35 @@
       "command": [
         {
           "run": ["/bin/sh", "-c", "git clone --depth=1 $GIT_REPO_URL /root/express"],
-          "collect": ["standard_output_log", { "type": "filesystem", "path": "/root/express", "alias": "repo_direct" }, "exit_code"]
+          "collect": ["exit_code"]
         },
         {
           "run": ["/bin/sh", "-c", "cd /root/express && git archive --format=tar $GIT_REPO_BRANCH"],
-          "collect": [{ "type": "standard_output_filesystem", "alias": "repo"}, "exit_code"]
+          "collect": [{ "type": "standard_output_filesystem", "alias": "repo" }]
         }
       ]
     },
     {
       "name": "Install NPM modules",
       "type": "node_6",
-      "import": [],
-      "command": []
+      "import": [
+        {
+          "to": "filesystem",
+          "from": "repo",
+          "folder": "/tmp"
+        }
+      ],
+      "command": [
+        {
+          "run": ["/bin/sh", "-c", "cd /tmp && npm install"],
+          "collect": [{ "type": "filesystem", "path": "/tmp", "alias": "project" }]
+        }
+      ]
     },
     {
       "name": "Test project",
       "type": "mocha",
       "import": [
-
         {
           "to": "environment",
           "from": "git_repository_url",
