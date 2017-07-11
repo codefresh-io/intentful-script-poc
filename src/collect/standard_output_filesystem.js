@@ -4,4 +4,4 @@ module.exports = Object.assign(function(commandApi){
         .getOutput()
         .then(({ stdout })=> stdout);
 
-}, { data_type: "tar" });
+}, { data_type: "filesystem" });

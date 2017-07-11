@@ -8,6 +8,7 @@ const
     LINE_REGEXP = /^((not )?ok)\s?([0-9]*)\s?(.*)/;
 
 module.exports = _.assign(function(commandApi){
+
     let lineStream = kefir
         .fromPromise(commandApi.getOutput())
         .flatMap(({ stdout })=> {
@@ -20,7 +21,7 @@ module.exports = _.assign(function(commandApi){
         .filter((line)=> TOTAL_COUNT_REGEXP.test(line))
         .take(1)
         .map((line)=> +_.last(line.match(TOTAL_COUNT_REGEXP)))
-        .toProperty(()=> 0)
+        .toProperty(()=> -1)
         .last();
 
     let testResultProperty = lineStream
@@ -34,10 +35,11 @@ module.exports = _.assign(function(commandApi){
 
     return kefir
         .combine([totalTestCountProperty, testResultProperty])
-        .map(([totalTestCount = 0, testResult])=> ({
+        .map(([totalTestCount, testResult])=> ({
             total: totalTestCount,
             pass: testResult.length === totalTestCount && testResult.every(_.property('pass')),
             report: testResult
         }))
-        .toPromise()
+        .toPromise();
+
 }, { data_type: "test_report" });

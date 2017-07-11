@@ -17,11 +17,11 @@
       ],
       "command": [
         {
-          "run": ["/bin/sh", "-c", "git clone --depth=1 $GIT_REPO_URL /root/express"],
-          "collect": ["exit_code"]
+          "run": ["/bin/sh", "-c", "git clone --depth=1 $GIT_REPO_URL output"],
+          "collect": []
         },
         {
-          "run": ["/bin/sh", "-c", "cd /root/express && git archive --format=tar $GIT_REPO_BRANCH"],
+          "run": ["/bin/sh", "-c", "cd output && git archive --format=tar $GIT_REPO_BRANCH"],
           "collect": [{ "type": "standard_output_filesystem", "alias": "repo" }]
         }
       ]
@@ -39,32 +39,31 @@
       "command": [
         {
           "run": ["/bin/sh", "-c", "cd /tmp && npm install"],
-          "collect": [{ "type": "filesystem", "path": "/tmp", "alias": "project" }]
+          "collect": []
+        },
+        {
+          "run": ["/bin/sh", "-c", "cd /tmp && tar -c $(ls -A)"],
+          "collect": [{ "type": "standard_output_filesystem", "alias": "inflated_repo" }]
         }
       ]
     },
     {
-      "name": "Test project",
-      "type": "mocha",
+      "name": "Test project (using mocha)",
+      "type": "mocha_node_8",
       "import": [
         {
-          "to": "environment",
-          "from": "git_repository_url",
-          "variable_name": "ANOTHER_TEST"
+          "to": "filesystem",
+          "from": "inflated_repo",
+          "folder": "/tmp"
         }
       ],
       "command": [
         {
-          "run": ["npm", "?"],
-          "collect": ["tap_test_framework", "exit_code"]
-        },
-        {
-          "run": ["echo", "1..10\nok 1 Hello World"],
-          "collect": ["tap_test_framework", { "type": "filesystem", "path": "/etc" }]
-        },
-        {
-          "run": ["bash", "-c", "cd express && npm run test-tap"],
-          "collect": ["tap_test_framework"]
+          "run": ["/bin/sh", "-c", "cd /tmp && mocha --reporter tap"],
+          "collect": [
+            { "type":"exit_code_test_report", "alias": "basic_test_result"},
+            { "type":"standard_output_tap_test_report", "alias": "test_result"}
+          ]
         }
       ]
     }
