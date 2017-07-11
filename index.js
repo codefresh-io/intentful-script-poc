@@ -33,17 +33,6 @@ let
         });
     })(minimist(process.argv.slice(2), { default: { "folder": ".", "host": "localhost", "port": 2376 }, alias: { "folder": "f", "host": "h", "port": "p" }}));
 
-// Debug: A glance into stage run
-// kefir.merge(["stdout", "stdin"].map((streamName)=> kefir.fromEvents(stage, streamName))).onValue((chunk)=> process.stdout.write(chunk));
-// let artifactStream = kefir.fromEvents(stage, 'artifact');
-// artifactStream.onValue(({ command_index, collector_index, data, data_type, alias })=> {
-//     let keyName = ["stage", command_index, collector_index].join('_');
-//     alias && registry.set(alias, 'pointer', keyName);
-//     data instanceof Stream ? data.pipe(registry.getWriteStream(keyName, data_type)) : registry.set(keyName, data_type, _.isObject(data) ? JSON.stringify(data) : data);
-// });
-
-//stage.run(_.get(sampleProject, 'stage.0')).then(()=> console.log(store.toJSON()));
-
 let prc = kefir.concat(
     sampleProject.stage.map((script, stageIndex)=> {
         return kefir
@@ -54,23 +43,26 @@ let prc = kefir.concat(
                     stageCompleteProperty = kefir.fromPromise(stage.run(script));
 
                 return kefir
-                    .merge(["stdout", "stderr", "artifact"].map((eventName)=> kefir.fromEvents(stage, eventName).map((data)=> ({ type: eventName, stage_index: stageIndex, data }))))
-                    .merge(stageCompleteProperty.ignoreValues())
-                    .takeErrors(1)
+                    .merge([
+                        kefir.constant({ "type": "stage", "data": { "name": script["name"], "index": stageIndex }}),
+                        ...["stdout", "stderr", "artifact"].map((eventName)=> kefir.fromEvents(stage, eventName).map((data)=> ({ type: eventName, data: _.assign(data, { stage_index: stageIndex }) }))),
+                        stageCompleteProperty.ignoreValues()
+                    ])
                     .takeUntilBy(stageCompleteProperty);
             });
     })
-);
+).takeErrors(1);
 
 prc.onError((txt)=> console.warn("Error", txt.toString('utf8')));
 prc.onEnd(()=> console.log(util.inspect(store.toJSON(), { depth: 10 })));
 prc
     .filter(_.matches({ type: "artifact" }))
-    .map(_.property('data'))
-    .onValue(({ command_index, collector_index, data, data_type, alias })=> {
-        let keyName = ["stage", command_index, collector_index, uuid.v4()].join('_');
+    .map(({ data })=> data)
+    .onValue(({ stage_index, command_index, collector_index, data, data_type, alias })=> {
+        let keyName = ["stage", stage_index, command_index, collector_index].join('_');
         alias && registry.set(alias, 'pointer', keyName);
         data instanceof Stream ? data.pipe(registry.getWriteStream(keyName, data_type)) : registry.set(keyName, data_type, _.isObject(data) ? JSON.stringify(data) : data);
     });
 
-prc.map(_.property('stage_index')).skipDuplicates().onValue(_.partial(console.log, 'Running stage %d..'));
+prc.filter(_.matches({ "type": "stage" })).map(({ data: { name, index } })=> `Running stage #${index+1} (${name})`).onValue(console.log);
+
