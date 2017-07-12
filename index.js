@@ -14,8 +14,10 @@ const
 
 let
     store = new Backbone.Model(require('./data/sample_registry.json')),
+    triggerByEntry = (triggerName)=> kefir.merge([kefir.fromEvents(store, ["change", triggerName].join(':')), kefir[store.has(triggerName) ? "later" : "never"]()]).take(1),
+    registryStringToObject = (value)=> value && _.zipObject(["type", "value"], Array.from(value.match(/^([a-z_]+?)\|(.*)/i)).slice(1)),
     registry = {
-        get: _.flow(store.get.bind(store), (value)=> value && _.zipObject(["type", "value"], Array.from(value.match(/^([a-z_]+?)\|(.*)/i)).slice(1)), Promise.resolve.bind(Promise)),
+        get: _.flow(store.get.bind(store), registryStringToObject, Promise.resolve.bind(Promise)),
         getType(key){ return this.get(key).then(_.property('type')); },
         getValue(key){ return this.get(key).then(_.property('value')); },
         getStream(key){ return this.getValue(key).then((filename)=> fs.createReadStream(path.join(".", "data", "registry", filename))); },
@@ -33,18 +35,23 @@ let
         });
     })(minimist(process.argv.slice(2), { default: { "folder": ".", "host": "localhost", "port": 2376 }, alias: { "folder": "f", "host": "h", "port": "p" }}));
 
-let prc = kefir.concat(
-    sampleProject.stage.map((script, stageIndex)=> {
-        return kefir
-            .later()
+let processStream = kefir.merge(
+    sampleProject.stage.map((stageScript, stageIndex)=> {
+
+        let triggerEntry = stageScript["trigger"];
+
+        return (triggerEntry ? triggerByEntry(triggerEntry).flatMap(()=> {
+                let { type, value } = registryStringToObject(store.get(triggerEntry));
+                return type === "pointer" ? triggerByEntry(value) : kefir.later();
+            }) : kefir.later())
             .flatMap(()=> {
                 let
                     stage = stageFactory(),
-                    stageCompleteProperty = kefir.fromPromise(stage.run(script));
+                    stageCompleteProperty = kefir.fromPromise(stage.run(stageScript));
 
                 return kefir
                     .merge([
-                        kefir.constant({ "type": "stage", "data": { "name": script["name"], "index": stageIndex }}),
+                        kefir.constant({ "type": "stage", "data": { "name": stageScript["name"], "index": stageIndex }}),
                         ...["stdout", "stderr", "artifact"].map((eventName)=> kefir.fromEvents(stage, eventName).map((data)=> ({ type: eventName, data: _.assign(data, { stage_index: stageIndex }) }))),
                         stageCompleteProperty.ignoreValues()
                     ])
@@ -53,10 +60,9 @@ let prc = kefir.concat(
     })
 ).takeErrors(1);
 
-prc.onError((txt)=> console.warn("Error", txt.toString('utf8')));
-prc.onEnd(()=> console.log(util.inspect(store.toJSON(), { depth: 10 })));
-prc
-    .filter(_.matches({ type: "artifact" }))
+processStream.onError((txt)=> console.warn("Error", txt.toString('utf8')));
+processStream.onEnd(()=> console.log(util.inspect(store.toJSON(), { depth: 10 })));
+processStream.filter(_.matches({ type: "artifact" }))
     .map(({ data })=> data)
     .onValue(({ stage_index, command_index, collector_index, data, data_type, alias })=> {
         let keyName = ["stage", stage_index, command_index, collector_index].join('_');
@@ -64,5 +70,4 @@ prc
         data instanceof Stream ? data.pipe(registry.getWriteStream(keyName, data_type)) : registry.set(keyName, data_type, _.isObject(data) ? JSON.stringify(data) : data);
     });
 
-prc.filter(_.matches({ "type": "stage" })).map(({ data: { name, index } })=> `Running stage #${index+1} (${name})`).onValue(console.log);
-
+processStream.filter(_.matches({ "type": "stage" })).map(({ data: { name, index } })=> `Running stage #${index+1} (${name})`).onValue(console.log);

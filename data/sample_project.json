@@ -3,6 +3,7 @@
     {
       "name": "Clone Registry",
       "type": "git",
+      "trigger": "git_repository_url",
       "import": [
         {
           "to": "environment",
@@ -29,6 +30,7 @@
     {
       "name": "Install NPM modules",
       "type": "node_6",
+      "trigger": "repo",
       "import": [
         {
           "to": "filesystem",
@@ -48,8 +50,9 @@
       ]
     },
     {
-      "name": "Test project (using mocha)",
+      "name": "Test project (using mocha and TAP)",
       "type": "mocha_node_8",
+      "trigger": "inflated_repo",
       "import": [
         {
           "to": "filesystem",
@@ -61,8 +64,27 @@
         {
           "run": ["/bin/sh", "-c", "cd /tmp && mocha --reporter tap"],
           "collect": [
-            { "type":"exit_code_test_report", "alias": "basic_test_result"},
             { "type":"standard_output_tap_test_report", "alias": "test_result"}
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Test project (using mocha and exit code)",
+      "type": "mocha_node_8",
+      "trigger": "inflated_repo",
+      "import": [
+        {
+          "to": "filesystem",
+          "from": "inflated_repo",
+          "folder": "/tmp"
+        }
+      ],
+      "command": [
+        {
+          "run": ["/bin/sh", "-c", "cd /tmp && mocha"],
+          "collect": [
+            { "type":"exit_code_test_report", "alias": "basic_test_result"}
           ]
         }
       ]
