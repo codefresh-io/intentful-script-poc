@@ -12,18 +12,21 @@ const
     Stage = require('./src/stage'),
     { extract: tarExtractor } = require('tar-stream');
 
+let registryStringToObject = (value)=> value && _.zipObject(["type", "value"], Array.from(value.match(/^([a-z_]+?)\|(.*)/i)).slice(1)),
+    StoreModel = Backbone.Model.extend({
+        getBase: function(key){ return Promise.resolve(registryStringToObject(this.get(key))); },
+        getValue: function(key){ return this.getBase(key).then(_.property('value')); },
+        getStream: function(key){ return this.getValue(key).then((filename)=> fs.createReadStream(path.join(".", "data", "registry", filename))); },
+        setBase: function(key, type, value){ return Promise.resolve(this.set({ [key]: [type, value].join('|') })); },
+        getWriteStream: function(key, type){ let id = uuid.v4(), stream = fs.createWriteStream(path.join([".", "data", "registry", id].join('/'))); stream.once('finish',()=>{ this.setBase(key, type, id); }); return stream; },
+        followKey: function(key){
+            const triggerByEntry = (triggerName)=> kefir.merge([kefir.fromEvents(this, ["change", triggerName].join(':')), kefir[this.has(triggerName) ? "later" : "never"]()]).take(1);
+            return triggerByEntry(key).flatMap(()=> kefir.fromPromise(this.getBase(key))).flatMap(({ type, value })=> type === "pointer" ? triggerByEntry(value) : kefir.later()).toPromise();
+        }
+    });
+
 let
-    store = new Backbone.Model(require('./data/sample_registry.json')),
-    triggerByEntry = (triggerName)=> kefir.merge([kefir.fromEvents(store, ["change", triggerName].join(':')), kefir[store.has(triggerName) ? "later" : "never"]()]).take(1),
-    registryStringToObject = (value)=> value && _.zipObject(["type", "value"], Array.from(value.match(/^([a-z_]+?)\|(.*)/i)).slice(1)),
-    registry = {
-        get: _.flow(store.get.bind(store), registryStringToObject, Promise.resolve.bind(Promise)),
-        getType(key){ return this.get(key).then(_.property('type')); },
-        getValue(key){ return this.get(key).then(_.property('value')); },
-        getStream(key){ return this.getValue(key).then((filename)=> fs.createReadStream(path.join(".", "data", "registry", filename))); },
-        set: (key, type, value)=> Promise.resolve(store.set({ [key]: [type, value].join('|') })),
-        getWriteStream(key, type){ let id = uuid.v4(), stream = fs.createWriteStream(path.join([".", "data", "registry", id].join('/'))); stream.once('finish',()=>{ this.set(key, type, id); }); return stream; }
-    },
+    registry = new StoreModel(require('./data/sample_registry.json')),
     stageFactory = ()=>(function({ folder: dockerSslFolder, host: dockerHost, port: dockerPort }){
         return new Stage({
             registry,
@@ -40,10 +43,7 @@ let processStream = kefir.merge(
 
         let triggerEntry = stageScript["trigger"];
 
-        return (triggerEntry ? triggerByEntry(triggerEntry).flatMap(()=> {
-                let { type, value } = registryStringToObject(store.get(triggerEntry));
-                return type === "pointer" ? triggerByEntry(value) : kefir.later();
-            }) : kefir.later())
+        return (triggerEntry ? kefir.fromPromise(registry.followKey(triggerEntry)) : kefir.later())
             .flatMap(()=> {
                 let
                     stage = stageFactory(),
@@ -61,13 +61,13 @@ let processStream = kefir.merge(
 ).takeErrors(1);
 
 processStream.onError((txt)=> console.warn("Error", txt.toString('utf8')));
-processStream.onEnd(()=> console.log(util.inspect(store.toJSON(), { depth: 10 })));
+processStream.onEnd(()=> console.log(util.inspect(registry.toJSON(), { depth: 10 })));
 processStream.filter(_.matches({ type: "artifact" }))
     .map(({ data })=> data)
     .onValue(({ stage_index, command_index, collector_index, data, data_type, alias })=> {
-        let keyName = ["stage", stage_index, command_index, collector_index].join('_');
-        alias && registry.set(alias, 'pointer', keyName);
-        data instanceof Stream ? data.pipe(registry.getWriteStream(keyName, data_type)) : registry.set(keyName, data_type, _.isObject(data) ? JSON.stringify(data) : data);
+        let keyName = ["_stage", stage_index, command_index, collector_index].join('_');
+        alias && registry.setBase(alias, 'pointer', keyName);
+        data instanceof Stream ? data.pipe(registry.getWriteStream(keyName, data_type)) : registry.setBase(keyName, data_type, _.isObject(data) ? JSON.stringify(data) : data);
     });
 
 processStream.filter(_.matches({ "type": "stage" })).map(({ data: { name, index } })=> `Running stage #${index+1} (${name})`).onValue(console.log);

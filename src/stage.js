@@ -28,11 +28,10 @@ const Importers = {
         return registry.getValue(from).then((value) => ({[variable_name]: value}));
     },
     "filesystem": function (registry, dockerClient, {from, folder, _containerId}) {
-        let getKeyName = (key) => registry.get(key).then(({type, value}) => type === "pointer" ? getKeyName(value) : key);
+        let getKeyName = (key) => registry.getBase(key).then(({type, value}) => type === "pointer" ? getKeyName(value) : key);
         return getKeyName(from).then((key) => {
             return registry.getStream(key).then((stream) => {
-                return dockerClient.setFileSystemPath({containerId: _containerId, path: folder, stream}).then(() => {
-                });
+                return dockerClient.setFileSystemPath({containerId: _containerId, path: folder, stream}).then(() => {});
             });
         });
     }
