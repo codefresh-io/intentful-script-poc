@@ -5,7 +5,7 @@ const
     EventEmitter = require('events').EventEmitter,
     util = require('util'),
     Stream = require('stream'),
-    DockerClientFactory = require('../lib/docker'),
+    DockerClientFactory = require('../../../lib/docker'),
     tapTestFrameworkCollect = require('./collect/standard_output_tap_test_report'),
     exitCodeTestReport = require('./collect/exit_code_test_report'),
     exitCodeCollect = require('./collect/exit_code'),
@@ -13,7 +13,7 @@ const
     standardOutputLogCollect = require('./collect/standard_output_log'),
     filesystemCollect = require('./collect/filesystem');
 
-const CONTAINER_TIMEOUT = 160; // Seconds
+const CONTAINER_TIMEOUT = 120; // Seconds
 
 const getImageForStageName = _.partial(_.get, {
     "mocha": "nicolaspio/frontend-tools",
@@ -51,11 +51,11 @@ const
     REGISTRY = Symbol('Registry');
 
 module.exports = class extends EventEmitter {
-    constructor({dockerClientConfiguration, registry}) {
+    constructor({config, registry}) {
         super();
         Object.assign(this, {
             [REGISTRY]: registry,
-            [DOCKER_CLIENT]: DockerClientFactory(dockerClientConfiguration)
+            [DOCKER_CLIENT]: DockerClientFactory(config)
         });
     }
 

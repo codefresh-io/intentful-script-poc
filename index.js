@@ -9,8 +9,7 @@ const
     sampleProject = require('./data/sample_project.json'),
     Backbone = require('backbone'),
     Stream = require('stream'),
-    Stage = require('./src/stage'),
-    { extract: tarExtractor } = require('tar-stream');
+    Project = require('./src/view/project');
 
 let registryStringToObject = (value)=> value && _.zipObject(["type", "value"], Array.from(value.match(/^([a-z_]+?)\|(.*)/i)).slice(1)),
     StoreModel = Backbone.Model.extend({
@@ -23,42 +22,22 @@ let registryStringToObject = (value)=> value && _.zipObject(["type", "value"], A
             const triggerByEntry = (triggerName)=> kefir.merge([kefir.fromEvents(this, ["change", triggerName].join(':')), kefir[this.has(triggerName) ? "later" : "never"]()]).take(1);
             return triggerByEntry(key).flatMap(()=> kefir.fromPromise(this.getBase(key))).flatMap(({ type, value })=> type === "pointer" ? triggerByEntry(value) : kefir.later()).toPromise();
         }
-    });
-
-let
+    }),
     registry = new StoreModel(require('./data/sample_registry.json')),
-    stageFactory = ()=>(function({ folder: dockerSslFolder, host: dockerHost, port: dockerPort }){
-        return new Stage({
-            registry,
-            dockerClientConfiguration: _.assign({
-                    host: dockerHost,
-                    port: dockerPort,
-                }, ((arr)=> _.zipObject(arr, arr.map(_.flow((filename)=> [path.resolve(dockerSslFolder, filename), "pem"].join('.'), _.partial(fs.readFileSync, _, 'utf8')))))(["ca", "cert", "key"])
-            )
-        });
-    })(minimist(process.argv.slice(2), { default: { "folder": ".", "host": "localhost", "port": 2376 }, alias: { "folder": "f", "host": "h", "port": "p" }}));
+    config = (function({ folder: dockerSslFolder, host: dockerHost, port: dockerPort }){
+        return _.assign({
+                host: dockerHost,
+                port: dockerPort,
+        }, ((arr)=> _.zipObject(arr, arr.map(_.flow((filename)=> [path.resolve(dockerSslFolder, filename), "pem"].join('.'), _.partial(fs.readFileSync, _, 'utf8')))))(["ca", "cert", "key"]))
+    })(minimist(process.argv.slice(2), { default: { "folder": ".", "host": "localhost", "port": 2376 }, alias: { "folder": "f", "host": "h", "port": "p" }})),
+    project = new Project({ registry, config });
 
-let processStream = kefir.merge(
-    sampleProject.stage.map((stageScript, stageIndex)=> {
+let processStream = kefir
+    .merge(["stdout", "stderr", "artifact", "stage"].map((eventName)=> kefir.fromEvents(project, eventName)))
+    .merge(kefir.fromEvents(project, 'error').flatMap(kefir.constantError))
+    .takeUntilBy(kefir.fromEvents(project, 'end').take(1));
 
-        let triggerEntry = stageScript["trigger"];
-
-        return (triggerEntry ? kefir.fromPromise(registry.followKey(triggerEntry)) : kefir.later())
-            .flatMap(()=> {
-                let
-                    stage = stageFactory(),
-                    stageCompleteProperty = kefir.fromPromise(stage.run(stageScript));
-
-                return kefir
-                    .merge([
-                        kefir.constant({ "type": "stage", "data": { "name": stageScript["name"], "index": stageIndex }}),
-                        ...["stdout", "stderr", "artifact"].map((eventName)=> kefir.fromEvents(stage, eventName).map((data)=> ({ type: eventName, data: _.assign(data, { stage_index: stageIndex }) }))),
-                        stageCompleteProperty.ignoreValues()
-                    ])
-                    .takeUntilBy(stageCompleteProperty);
-            });
-    })
-).takeErrors(1);
+project.run(sampleProject);
 
 processStream.onError((txt)=> console.warn("Error", txt.toString('utf8')));
 processStream.onEnd(()=> console.log(util.inspect(registry.toJSON(), { depth: 10 })));
