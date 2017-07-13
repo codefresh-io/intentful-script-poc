@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Title</title>
+    <script src="https://unpkg.com/jquery@3.2.1/dist/jquery.min.js"></script>
+    <script src="https://unpkg.com/kefir@3.7.2/dist/kefir.min.js"></script>
+    <script src="https://unpkg.com/lodash@4.17.4/lodash.min.js"></script>
+    <style>
+
+        :root {
+            --peep-line-height: 1rem;
+        }
+        div.peep {
+            background-color: #4f7e5e;
+            height: calc(var(--peep-line-height) + 10px);
+            overflow: hidden;
+            position: relative;
+        }
+
+        div.peep > div {
+            position: absolute;
+            /*transform: translate(0, calc(-1 * calc(var(--peep-line-height) + 10px)));*/
+            transition: transform 200ms;
+        }
+        pre {
+            color: #abffd3;
+            font-family: Monospace;
+            height: var(--peep-line-height);
+            font-size: var(--peep-line-height);
+            padding: 5px;
+            margin: 0;
+        }
+
+        div.asset {
+            font-family: Arial;
+            display: inline-block;
+            width: 50px;
+            height: 50px;
+            border-radius: 50px;
+            position: relative;
+        }
+        div.asset.fs {
+            background-color: navy;
+        }
+        div.asset.fs:after {
+            color: #eee;
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            font-size: 11px;
+            content: "FS\A File System";
+            text-align: center;
+            white-space: pre-line;
+            transform: translate(-50%, -50%);
+        }
+
+        div.asset.log {
+            background-color: green;
+        }
+        div.asset.log:after {
+            color: #eee;
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            font-size: 11px;
+            content: "LOG\A Log";
+            text-align: center;
+            white-space: pre-line;
+            transform: translate(-50%, -50%);
+        }
+        div.asset.res {
+            background-color: sienna;
+        }
+        div.asset.res:after {
+            color: #eee;
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            font-size: 11px;
+            content: "RES\A Test Result";
+            text-align: center;
+            white-space: pre-line;
+            transform: translate(-50%, -50%);
+        }
+    </style>
+</head>
+<body>
+
+    <div class="peep">
+        <div>
+            <pre>git clone --depth=1 $GIT_REPO_URL output</pre>
+            <pre>cd output && git archive --format=tar $GIT_REPO_BRANCH</pre>
+            <pre>cd /tmp && npm install</pre>
+            <pre>cd /tmp && tar -c $(ls -A)</pre>
+        </div>
+    </div>
+    <script>
+
+        Kefir.repeat(()=> {
+            return Kefir.sequentially(500, _.range(1, 4));
+        }).onValue((line)=>{
+            $('div.peep > div').css({
+                transform: `translate(0, calc(${-line} * calc(var(--peep-line-height) + 10px)))`
+            });
+        });
+
+        Kefir
+            .sequentially(1500, _.range(1000))
+            .onValue((name)=>{
+                $('<div/>').addClass(["asset", _.sample(["fs", "log", "res"])].join(' ')).appendTo('body');
+            });
+    </script>
+</body>
+</html>

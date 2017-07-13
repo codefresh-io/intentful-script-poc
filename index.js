@@ -9,7 +9,8 @@ const
     sampleProject = require('./data/sample_project.json'),
     Backbone = require('backbone'),
     Stream = require('stream'),
-    Project = require('./src/view/project');
+    Project = require('./src/view/project'),
+    Web = require('./src/view/web');
 
 let registryStringToObject = (value)=> value && _.zipObject(["type", "value"], Array.from(value.match(/^([a-z_]+?)\|(.*)/i)).slice(1)),
     StoreModel = Backbone.Model.extend({
@@ -59,3 +60,5 @@ processStream
     .filter(_.matches({ "type": "stage" }))
     .map(({ data: { name, index } })=> `Running stage #${index+1} -> ${name}`)
     .onValue(console.log);
+
+let webView = new Web();
