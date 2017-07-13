@@ -34,7 +34,7 @@ module.exports = class extends EventEmitter {
                             return kefir
                                 .merge([
                                     kefir.constant({ "type": "stage", "data": { "name": stageScript["name"], "index": stageIndex }}),
-                                    ...["stdout", "stderr", "artifact"].map((eventName)=> kefir.fromEvents(stage, eventName).map((data)=> ({ type: eventName, data: _.assign(data, { stage_index: stageIndex }) }))),
+                                    ...["stdout", "stderr", "artifact", "command_begin", "command_end"].map((eventName)=> kefir.fromEvents(stage, eventName).map((data)=> ({ type: eventName, data: _.assign(data, { stage_index: stageIndex }) }))),
                                     stageCompleteProperty.ignoreValues()
                                 ])
                                 .takeUntilBy(stageCompleteProperty);

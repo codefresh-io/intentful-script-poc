@@ -96,7 +96,7 @@ module.exports = class extends EventEmitter {
                                     .fromPromise(dockerClient.createExec({containerId, cmd: run, env}))
                                     .flatMap(({execId}) => kefir.fromPromise(dockerClient.startExec({execId})).map(_.partial(_.assign, {execId})))
                                     .flatMap(({stdout, stderr, execId}) => {
-
+                                        this.emit('command_begin', { index: commandIndex });
                                         stdout.on('data', this.emit.bind(this, 'stdout'));
                                         stderr.on('data', this.emit.bind(this, 'stderr'));
 
@@ -124,6 +124,10 @@ module.exports = class extends EventEmitter {
                                                                 alias
                                                             });
                                                             return ((data instanceof Stream) ? kefir.fromEvents(data, 'end').take(1).map(() => true) : kefir.constant()).map(_.constant(true));
+                                                        })
+                                                        .map((value)=> {
+                                                            this.emit('command_end', { index: commandIndex });
+                                                            return value;
                                                         });
                                                 })
                                             );

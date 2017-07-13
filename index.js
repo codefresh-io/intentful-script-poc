@@ -33,7 +33,7 @@ let registryStringToObject = (value)=> value && _.zipObject(["type", "value"], A
     project = new Project({ registry, config });
 
 let processStream = kefir
-    .merge(["stdout", "stderr", "artifact", "stage"].map((eventName)=> kefir.fromEvents(project, eventName)))
+    .merge(["stdout", "stderr", "artifact", "stage", "command_begin", "command_end"].map((eventName)=> kefir.fromEvents(project, eventName)))
     .merge(kefir.fromEvents(project, 'error').flatMap(kefir.constantError))
     .takeUntilBy(kefir.fromEvents(project, 'end').take(1));
 
@@ -49,4 +49,13 @@ processStream.filter(_.matches({ type: "artifact" }))
         data instanceof Stream ? data.pipe(registry.getWriteStream(keyName, data_type)) : registry.setBase(keyName, data_type, _.isObject(data) ? JSON.stringify(data) : data);
     });
 
-processStream.filter(_.matches({ "type": "stage" })).map(({ data: { name, index } })=> `Running stage #${index+1} (${name})`).onValue(console.log);
+let projectSnapshot = new Backbone.Collection();
+
+processStream
+    .filter(({ type })=> ["command_begin", "command_end"].includes(type))
+    .onValue(({ type, data: { index, stage_index }})=> projectSnapshot[type === "command_begin" ? "add" : "remove"]({ id: [stage_index, index].join('_') }));
+
+processStream
+    .filter(_.matches({ "type": "stage" }))
+    .map(({ data: { name, index } })=> `Running stage #${index+1} -> ${name}`)
+    .onValue(console.log);
