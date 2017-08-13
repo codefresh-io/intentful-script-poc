@@ -18,7 +18,7 @@ const CONTAINER_TIMEOUT = 120; // Seconds
 const getImageForStageName = _.partial(_.get, {
     "mocha": "nicolaspio/frontend-tools",
     "git": "bwits/docker-git-alpine",
-    "mocha_node_8": "codefresh/mocha_node_8",
+    "mocha_node_8": "usemtech/nodejs-mocha",
     "node_6": "node:6-alpine",
     "node_8": "node:8-alpine"
 }, _, 'alpine:3.1');
