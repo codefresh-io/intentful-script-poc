@@ -15,13 +15,15 @@ const
 
 const CONTAINER_TIMEOUT = 120; // Seconds
 
-const getImageForStageName = _.partial(_.get, {
-    "mocha": "nicolaspio/frontend-tools",
-    "git": "bwits/docker-git-alpine",
-    "mocha_node_8": "usemtech/nodejs-mocha",
-    "node_6": "node:6-alpine",
-    "node_8": "node:8-alpine"
-}, _, 'alpine:3.1');
+const getImageForStageType = (type)=> {
+    return (type.match(/^docker:(.+)/) || []).slice(1,2)[0] || _.get({
+        "mocha": "nicolaspio/frontend-tools",
+        "git": "bwits/docker-git-alpine",
+        "mocha_node_8": "usemtech/nodejs-mocha",
+        "node_6": "node:6-alpine",
+        "node_8": "node:8-alpine"
+    }, type, 'alpine:3.1');
+};
 
 const Importers = {
     "environment": function (registry, dockerClient, {from, variable_name}) {
@@ -61,20 +63,23 @@ module.exports = class extends EventEmitter {
 
     run({type, ["import"]: _import, command}) {
 
-        let [dockerClient, registry] = [DOCKER_CLIENT, REGISTRY].map((symbol) => this[symbol]),
-            containerIdProperty = kefir
-                .fromPromise(dockerClient.createContainer({
-                    cmd: ["sleep", CONTAINER_TIMEOUT.toString()],
-                    name: ["cf", uuid()].join('_'),
-                    image: getImageForStageName(type)
-                }))
+        let [username, password, dockerImage] = _.at(getImageForStageType(type).match(/(((.+?):(.+?))@)?(.+)/), [3,4,5]),
+            [dockerClient, registry] = [DOCKER_CLIENT, REGISTRY].map((symbol) => this[symbol]),
+            containerIdProperty = kefir.concat([
+                    kefir.fromPromise(dockerClient.inspectImage({ imageName: dockerImage })).ignoreValues().flatMapErrors(()=> kefir.fromPromise(dockerClient.pullImage({ imageName: dockerImage, username, password })).map((b)=> b.toString()).ignoreValues()),
+                    kefir.later().flatMap(()=> kefir.fromPromise(dockerClient.createContainer({
+                        cmd: ["sleep", CONTAINER_TIMEOUT.toString()],
+                        name: ["cf", uuid()].join('_'),
+                        image: dockerImage
+                    })))
+                ])
                 .flatMap(({containerId}) => kefir.fromPromise(dockerClient.startContainer({containerId})).map(_.constant(containerId)))
                 .toProperty();
 
         let environmentVariableProperty = containerIdProperty.flatMap((containerId) => {
-            return kefir.combine(_import.map((importConfig) =>
+            return kefir.combine([kefir.constant({}), ..._import.map((importConfig) =>
                 kefir.fromPromise(Importers[importConfig["to"]](registry, dockerClient, _.assign(importConfig, {_containerId: containerId})))
-            ), _.assign);
+            )], _.assign);
         }).toProperty();
 
         let containerEndStream = containerIdProperty
