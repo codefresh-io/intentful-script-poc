@@ -13,7 +13,7 @@ const
     standardOutputLogCollect = require('./collect/standard_output_log'),
     filesystemCollect = require('./collect/filesystem');
 
-const CONTAINER_TIMEOUT = 120; // Seconds
+const CONTAINER_TIMEOUT = 3600; // Seconds
 
 const getImageForStageType = (type)=> {
     return (type.match(/^docker:(.+)/) || []).slice(1,2)[0] || _.get({
@@ -113,7 +113,7 @@ module.exports = class extends EventEmitter {
 
                                         return kefir
                                             .combine(
-                                                _.uniq(collect.concat("exit_code")).map((collectorObject, collectorIndex) => {
+                                                _.uniq(["exit_code", ...collect]).map((collectorObject, collectorIndex) => {
                                                     let
                                                         {alias, type = collectorObject} = collectorObject,
                                                         collector = Collectors[type] || (() => Promise.reject('Unsupported Collector'));
