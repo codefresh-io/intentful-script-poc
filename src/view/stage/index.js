@@ -21,7 +21,8 @@ const getImageForStageType = (type)=> {
         "git": "bwits/docker-git-alpine",
         "mocha_node_8": "usemtech/nodejs-mocha",
         "node_6": "node:6-alpine",
-        "node_8": "node:8-alpine"
+        "node_8": "node:8-alpine",
+        "docker": "docker:stable-dind"
     }, type, 'alpine:3.1');
 };
 
